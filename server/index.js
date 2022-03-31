@@ -1,101 +1,52 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const http = require("http");
-const socketIo = require("socket.io");
-const app = express()
-const server = http.createServer(app);
-const io = socketIo(server);
-var session = require('express-session');
-const port = process.env.PORT || 3001;
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const app = express();
+const userRoutes = require('./routes/userRoutes')
+const messageRoute = require('./routes/messagesRoutes')
+require("dotenv").config();
+const socket = require('socket.io')
 
-const mysql = require("mysql");
 
-const db = mysql.createPool({
-    host: "localhost",
-    user: "root",
-    password:"",
-    database:"chat_en_ligne"
-});
 app.use(cors());
-app.use(express.json())
-app.use(bodyParser.urlencoded({extended:true}))
+app.use(express.json());
 
-app.post("/insert", (req,res)=>{
-    const pseudo = req.body.pseudo;
-    if(pseudo){
-        db.query('SELECT * FROM user WHERE pseudo = ? ', [pseudo], function(error, results, fields){
+app.use("/api/auth", userRoutes)
+app.use("/api/messages", messageRoute)
 
-            if(results.length > 0){
-                res.send("Pseudo deja utilisé");
-                console.log("Pseudo deja utilisé");
-            }
-            if (!results.length > 0){
-
-                const sql = "INSERT INTO  user(pseudo) VALUES (?)";
-                db.query(sql, [pseudo], (err, result)=>{
-                  console.log("Utilisateur créé avec success");
-                  res.send(result)
-                });
-            }
-
-        })
-    }
-    else{
-        res.send('Please enter Pseudo');
-        console.log("Please entrez votre Pseudo");
-        res.end();
-    }
-
+mongoose.connect(process.env.MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+}).then(() => {
+    console.log("DB Connected Successfull");
+}).catch((err) => {
+    console.log(err.message);
 });
 
-app.post("/login" , (req, res)=>{
-  
-  var pseudo = request.body.pseudo;
-  console.log(pseudo);
-   if (pseudo ) {
-      db.query('SELECT * FROM user WHERE pseudo = ? ', [pseudo], function(error, results, fields) {
-          if (results.length > 0) {
-              request.session.loggedin = true;
-              request.session.pseudo = pseudo;
-             
-              // response.redirect('/home');
-              response.send('connecté');
-          } else {
-              response.send('Incorrect Pseudo');
-          }
-          response.end();
-      });
-  }
-   else {
-      response.send('Please enter Pseudo');
-      response.end();
-  }
+const server = app.listen(process.env.PORT, () => {
+    console.log(`Server started on Port ${process.env.PORT}`);
+})
 
-});
+const io = socket(server,{
+    cors:{
+        origin: "http://localhost:3000",
+        credentials: true,
+    },
+})
 
+global.onlineUsers = new Map();
 
+io.on("connection", (socket)=>{
+    global.chatSocket= socket;
+    socket.on("add-user", (userId)=>{
+        onlineUsers.set(userId,socket.id)
+    })
 
-
-
-
-
-
-
-io.on('connection' , function(socket){
-  console.log ("Un utilisateur s'est connecté");
-  io.emit("Un utilisateur s'est connecté");
-
-  socket.on('disconnect', function(){
-      console.log ("Un utilisateur s'est déconnecté");
-  });
-  socket.on('chat message',  (msg)=>{
-      console.log("message reçu :" + msg);
-      io.emit('chat message' , msg);
-  });
-});
-
-server.listen(port, () => console.log(`Listening on port ${port}`));
-// app.listen(3001, ()=>{
-//     console.log("running on port 3001");
-// });
+    socket.on("send-msg", (data)=>{
+        console.log("sendmgs", {data});
+        const sendUserSocket = onlineUsers.get(data.to);
+        if(sendUserSocket){
+            socket.to(sendUserSocket).emit("msg-recieve", data.message)
+        }
+    })
+})
